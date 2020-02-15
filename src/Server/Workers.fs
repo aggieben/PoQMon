@@ -1,4 +1,5 @@
 namespace PoQMon
+open System
 open System.IO
 open System.Threading.Tasks
 open Microsoft.Extensions.Options
@@ -7,62 +8,64 @@ open Microsoft.Extensions.Logging
 
 type LogFileWatcherOptions() =
     member val DataDir = "" with get,set
-    member val LogFormat = "" with get,set
+    member val LogFormat = "csv" with get,set
+    member val FrequencyMs = 1000 with get,set
+
+type private FileStatus =
+    { fileInfo : FileInfo
+      offset : int64 }
 
 type LogFileWatcher(logger:ILogger<LogFileWatcher>, optionsMonitor:IOptionsMonitor<LogFileWatcherOptions>) =
     inherit BackgroundService()
 
-    let handleFileChanged (fsea:FileSystemEventArgs) =
-        sprintf "%s changed: %O" fsea.FullPath fsea.ChangeType
-        |> logger.LogTrace
-
-    let handlePathCreated (fsea:FileSystemEventArgs) =
-        sprintf "%s created: %O" fsea.FullPath fsea.ChangeType
-        |> logger.LogTrace
-
-    let handlePathRenamed (rea:RenamedEventArgs) =
-        sprintf "%s renamed to %s (%O)" rea.OldFullPath rea.FullPath rea.ChangeType
-        |> logger.LogTrace
-
-    let handlePathDeleted (fsea:FileSystemEventArgs) =
-        sprintf "%s deleted (%O)" fsea.FullPath fsea.ChangeType
-        |> logger.LogTrace
-
-    let configureWatcher path format =
-        sprintf "configuring watcher with path: '%s' and format: '%s'" path format
-        |> logger.LogTrace
-
-        if not (Directory.Exists(path)) then
-            failwithf "data directory does not exist: %s" path
-
-        let watcher = new FileSystemWatcher()
-        watcher.Path <- path
-        watcher.IncludeSubdirectories <- true
-        watcher.Filter <- "*.csv"
-        watcher.NotifyFilter <- watcher.NotifyFilter ||| NotifyFilters.LastAccess
-        watcher.NotifyFilter <- watcher.NotifyFilter ||| NotifyFilters.Size
-
-        watcher.Changed.Add(handleFileChanged)
-        watcher.Created.Add(handlePathCreated)
-        watcher.Renamed.Add(handlePathRenamed)
-        watcher.Deleted.Add(handlePathDeleted)
-        watcher
-
     let _options = optionsMonitor.CurrentValue
-    let _watcher = configureWatcher _options.DataDir _options.LogFormat
 
-    override __.Dispose() =
-        _watcher.Dispose()
-        base.Dispose()
+    // FileStatus -> {| status; content; |}
+    let getChanges (fstatus:FileStatus) =
+        async {
+            let fs = fstatus.fileInfo.OpenRead()
+            fs.Seek(fstatus.offset, SeekOrigin.Begin) |> ignore
+        }
+
+
+    let rec queryFiles (dinfo:DirectoryInfo) pattern fsMap since =
+        let entries =
+            query {
+                for f in dinfo.EnumerateFiles(pattern) do
+                where (f.CreationTime > since
+                       || f.LastWriteTime > since)
+                select f
+            }
+
+        ()
+        // open the files, get changes since last status
+
+
+        // fire events?  publish to a bus?
+
+        // update fsMap with new FileStatus records
+
+        // wait for FrequencyMs
+
+        // call self
+
+
+
+
 
     override __.ExecuteAsync(stopToken) =
         async {
-            logger.LogTrace "enabling filewatcher events..."
-            _watcher.EnableRaisingEvents <- true
+            logger.LogTrace "monitoring log files"
+            let dirinfo = DirectoryInfo(Path.Combine(_options.DataDir, "log"))
+            if not dirinfo.Exists then
+                failwithf "%s does not exist" logPath
+
             while not stopToken.IsCancellationRequested do
-                do! Async.Sleep 500
+
+                do! Async.Sleep _options.FrequencyMs
+
             logger.LogTrace "cancelling..."
-            _watcher.EnableRaisingEvents <- false
+
         }
         |> Async.StartAsTask
         :> Task
