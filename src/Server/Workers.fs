@@ -13,19 +13,19 @@ type LogFileWatcher(logger:ILogger<LogFileWatcher>, optionsMonitor:IOptionsMonit
     inherit BackgroundService()
 
     let handleFileChanged (fsea:FileSystemEventArgs) =
-        sprintf "handleFileChanged: %A" fsea
+        sprintf "%s changed: %O" fsea.FullPath fsea.ChangeType
         |> logger.LogTrace
 
     let handlePathCreated (fsea:FileSystemEventArgs) =
-        sprintf "handlePathCreated: %A" fsea
+        sprintf "%s created: %O" fsea.FullPath fsea.ChangeType
         |> logger.LogTrace
 
-    let handlePathRenamed (fsea:FileSystemEventArgs) =
-        sprintf "handlePathRenamed: %A" fsea
+    let handlePathRenamed (rea:RenamedEventArgs) =
+        sprintf "%s renamed to %s (%O)" rea.OldFullPath rea.FullPath rea.ChangeType
         |> logger.LogTrace
 
     let handlePathDeleted (fsea:FileSystemEventArgs) =
-        sprintf "handlePathDeleted: %A" fsea
+        sprintf "%s deleted (%O)" fsea.FullPath fsea.ChangeType
         |> logger.LogTrace
 
     let configureWatcher path format =
@@ -37,30 +37,32 @@ type LogFileWatcher(logger:ILogger<LogFileWatcher>, optionsMonitor:IOptionsMonit
 
         let watcher = new FileSystemWatcher()
         watcher.Path <- path
-        // watcher.Path <- (Path.Join(path,"log"))
-        // watcher.Filter <-
-        //     match format with
-        //     | "csv" -> "postgresql-*.csv"
-        //     | _ -> failwith "unsupported log format"
-        watcher.Filter <- ""
         watcher.IncludeSubdirectories <- true
+        watcher.Filter <- "*.csv"
+        watcher.NotifyFilter <- watcher.NotifyFilter ||| NotifyFilters.LastAccess
+        watcher.NotifyFilter <- watcher.NotifyFilter ||| NotifyFilters.Size
+
         watcher.Changed.Add(handleFileChanged)
         watcher.Created.Add(handlePathCreated)
         watcher.Renamed.Add(handlePathRenamed)
         watcher.Deleted.Add(handlePathDeleted)
         watcher
 
-    override this.ExecuteAsync(stopToken) =
-        let options = optionsMonitor.CurrentValue
+    let _options = optionsMonitor.CurrentValue
+    let _watcher = configureWatcher _options.DataDir _options.LogFormat
 
-        use watcher = configureWatcher options.DataDir options.LogFormat
+    override __.Dispose() =
+        _watcher.Dispose()
+        base.Dispose()
+
+    override __.ExecuteAsync(stopToken) =
         async {
             logger.LogTrace "enabling filewatcher events..."
-            watcher.EnableRaisingEvents <- true
+            _watcher.EnableRaisingEvents <- true
             while not stopToken.IsCancellationRequested do
                 do! Async.Sleep 500
             logger.LogTrace "cancelling..."
-            watcher.EnableRaisingEvents <- false
+            _watcher.EnableRaisingEvents <- false
         }
         |> Async.StartAsTask
         :> Task
