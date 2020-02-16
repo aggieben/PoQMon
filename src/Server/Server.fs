@@ -11,8 +11,9 @@ open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 
-open FSharp.Control.Tasks.V2
 open Giraffe
+open Elmish.Bridge
+open FSharp.Control.Tasks.V2
 open Shared
 
 
@@ -24,9 +25,13 @@ let port =
     |> tryGetEnv |> Option.map uint16 |> Option.defaultValue 8085us
 
 let buildConfiguration (args:string array) =
-    (new ConfigurationBuilder())
+    (ConfigurationBuilder())
         .AddCommandLine(args)
         .Build()
+
+let hub =
+    ServerHub()
+        .RegisterServer
 
 let webApp =
     route "/api/init" >=>
