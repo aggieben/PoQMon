@@ -38,12 +38,15 @@ type LogFileWatcher(logger:ILogger<LogFileWatcher>,
             let buf = fs.Length - fstatus.offset |> (int >> Array.zeroCreate)
             let! _ = fs.ReadAsync(buf, int fstatus.offset, buf.Length) |> Async.AwaitTask
 
-            return (fstatus,buf)
+            return ({fstatus with offset = fstatus.offset + (int64 buf.Length)} ,buf)
         }
 
     let publishChanges (fstatus:FileStatus,newdata:byte[]) =
         async {
-            // publish here
+            { timestamp = DateTimeOffset fstatus.fileInfo.LastWriteTimeUtc
+              path = fstatus.fileInfo.FullName
+              data = newdata }
+            |> updater.Post
             return fstatus
         }
 
@@ -57,26 +60,32 @@ type LogFileWatcher(logger:ILogger<LogFileWatcher>,
                     select f
                 }
 
-            // add new statuses to the map
-            let combinedMap =
-                entries
-                |> Seq.filter (fun fi -> not (fsMap.ContainsKey fi.FullName))
-                |> Seq.map (fun fi -> { fileInfo = fi; offset = 0L })
-                |> Seq.fold (fun map fs -> Map.add fs.fileInfo.FullName fs map) fsMap
-
             // snapshot the time *before* reading to make sure there aren't any little gaps
             let newSince = DateTime.UtcNow
 
-            // open the files, get changes since last status
             let! statuses =
-                Map.toSeq combinedMap
-                |> Seq.map (fun (_,fs) -> getChanges fs |> Async.bind publishChanges)
+                entries
+                |> Seq.map
+                    (fun fi ->
+                        match Map.tryFind fi.FullName fsMap with
+                        | Some fs -> { fs with fileInfo = fi }
+                        | None -> { fileInfo = fi; offset = 0L }
+                        |> getChanges
+                        |> Async.bind publishChanges)
                 |> Async.Parallel
 
-            // create updated map
             let newMap =
                 statuses
-                |> Array.fold (fun map fs -> Map.add fs.fileInfo.FullName fs map) Map.empty
+                |> Seq.fold
+                     (fun map fs ->
+                        let key = fs.fileInfo.FullName
+                        match Map.tryFind key fsMap with
+                        | Some _ ->
+                            Map.remove key map
+                            |> Map.add key fs
+                        | None ->
+                            Map.add key fs map)
+                     Map.empty
 
             do! Async.Sleep _options.FrequencyMs
 
