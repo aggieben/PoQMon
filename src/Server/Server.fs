@@ -31,7 +31,17 @@ let buildConfiguration (args:string array) =
 
 let hub =
     ServerHub()
-        .RegisterServer
+        .RegisterServer(ServerMsg.LogfileUpdate)
+
+let updater : MailboxProcessor<LogfileUpdate> =
+    MailboxProcessor.Start (fun inbox ->
+        let rec messageLoop() = async {
+            let! msg = inbox.Receive()
+
+            return! messageLoop()
+        }
+
+        messageLoop())
 
 let webApp =
     route "/api/init" >=>
@@ -49,6 +59,7 @@ let configureApp (app : IApplicationBuilder) =
 let configureServices (configuration : IConfiguration) (services : IServiceCollection) =
     services.Configure<LogFileWatcherOptions>(configuration) |> ignore
 
+    services.AddSingleton<MailboxProcessor<LogfileUpdate>>(updater) |> ignore
     services.AddGiraffe() |> ignore
     services.AddSingleton<Giraffe.Serialization.Json.IJsonSerializer>(Thoth.Json.Giraffe.ThothSerializer()) |> ignore
     services.AddHostedService<LogFileWatcher>() |> ignore

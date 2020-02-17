@@ -6,6 +6,7 @@ open Microsoft.Extensions.Options
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Microsoft.FSharpLu
+open Shared
 
 type LogFileWatcherOptions() =
     member val DataDir = "" with get,set
@@ -16,7 +17,9 @@ type private FileStatus =
     { fileInfo : FileInfo
       offset : int64 }
 
-type LogFileWatcher(logger:ILogger<LogFileWatcher>, optionsMonitor:IOptionsMonitor<LogFileWatcherOptions>) =
+type LogFileWatcher(logger:ILogger<LogFileWatcher>,
+                    optionsMonitor:IOptionsMonitor<LogFileWatcherOptions>,
+                    updater:MailboxProcessor<LogfileUpdate>) =
     inherit BackgroundService()
 
     let _options = optionsMonitor.CurrentValue
